@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { AppError } = require('./errorHandler');
 
 const auth = (req, res, next) => {
     try {
@@ -6,19 +7,19 @@ const auth = (req, res, next) => {
         const authHeader = req.header('Authorization');
         
         if (!authHeader) {
-            return res.status(401).json({ msg: 'No token' });
+            return next(new AppError('No token', 401));
         }
 
         // Check if it's Bearer token format
         if (!authHeader.startsWith('Bearer ')) {
-            return res.status(401).json({ msg: 'Token invalid' });
+            return next(new AppError('Token invalid', 401));
         }
 
         // Extract token (remove 'Bearer ' prefix)
         const token = authHeader.substring(7);
 
         if (!token) {
-            return res.status(401).json({ msg: 'No token' });
+            return next(new AppError('No token', 401));
         }
 
         // Verify token
@@ -29,16 +30,8 @@ const auth = (req, res, next) => {
         
         next();
     } catch (error) {
-        // Handle token verification errors
-        if (error.name === 'TokenExpiredError') {
-            return res.status(401).json({ msg: 'Token invalid' });
-        }
-        if (error.name === 'JsonWebTokenError') {
-            return res.status(401).json({ msg: 'Token invalid' });
-        }
-        
-        // Generic token error
-        return res.status(401).json({ msg: 'Token invalid' });
+        // JWT verification errors will be handled by the error handler
+        next(error);
     }
 };
 

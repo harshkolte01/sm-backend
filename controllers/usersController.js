@@ -1,8 +1,10 @@
 const User = require('../models/User');
 const Post = require('../models/Post');
+const { sanitizeName, sanitizeBio } = require('../utils/sanitizer');
+const { AppError } = require('../middleware/errorHandler');
 
 // Get user profile (public)
-const getUser = async (req, res) => {
+const getUser = async (req, res, next) => {
     try {
         const { id } = req.params;
 
@@ -10,7 +12,7 @@ const getUser = async (req, res) => {
         const user = await User.findById(id).select('-passwordHash');
         
         if (!user) {
-            return res.status(404).json({ msg: 'User not found' });
+            return next(new AppError('User not found', 404));
         }
 
         // Get recent post count for this user
@@ -28,36 +30,40 @@ const getUser = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Get user error:', error);
-        if (error.name === 'CastError') {
-            return res.status(400).json({ msg: 'Invalid user ID' });
-        }
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 
 // Update user profile (protected - owner only)
-const updateUser = async (req, res) => {
+const updateUser = async (req, res, next) => {
     try {
         const { id } = req.params;
         const { name, avatar, bio } = req.body;
 
         // Check if the authenticated user is the owner
         if (req.user.id !== id) {
-            return res.status(403).json({ msg: 'Access denied. You can only update your own profile' });
+            return next(new AppError('Access denied. You can only update your own profile', 403));
         }
 
         // Find user by ID
         const user = await User.findById(id);
         
         if (!user) {
-            return res.status(404).json({ msg: 'User not found' });
+            return next(new AppError('User not found', 404));
         }
 
-        // Update fields if provided
-        if (name !== undefined) user.name = name;
+        // Sanitize and update fields if provided
+        if (name !== undefined) {
+            const sanitizedName = sanitizeName(name);
+            if (!sanitizedName) {
+                return next(new AppError('Name cannot be empty', 400));
+            }
+            user.name = sanitizedName;
+        }
         if (avatar !== undefined) user.avatar = avatar;
-        if (bio !== undefined) user.bio = bio;
+        if (bio !== undefined) {
+            user.bio = sanitizeBio(bio);
+        }
 
         // Save updated user
         await user.save();
@@ -74,11 +80,7 @@ const updateUser = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Update user error:', error);
-        if (error.name === 'CastError') {
-            return res.status(400).json({ msg: 'Invalid user ID' });
-        }
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 

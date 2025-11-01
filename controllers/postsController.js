@@ -1,24 +1,29 @@
 const Post = require('../models/Post');
 const User = require('../models/User');
 const Comment = require('../models/Comment');
+const { sanitizePostText } = require('../utils/sanitizer');
+const { AppError } = require('../middleware/errorHandler');
 
 // Create a new post (protected)
-const createPost = async (req, res) => {
+const createPost = async (req, res, next) => {
     try {
         const { text, image } = req.body;
 
         // Validate required fields
         if (!text || text.trim().length === 0) {
-            return res.status(400).json({ msg: 'Text is required' });
+            return next(new AppError('Text is required', 400));
         }
 
         // Validate text length (max 500 characters)
         if (text.length > 500) {
-            return res.status(400).json({ msg: 'Text must be 500 characters or less' });
+            return next(new AppError('Text must be 500 characters or less', 400));
         }
 
-        // Sanitize text (basic sanitization - remove extra whitespace)
-        const sanitizedText = text.trim();
+        // Sanitize text for XSS protection
+        const sanitizedText = sanitizePostText(text);
+        if (!sanitizedText) {
+            return next(new AppError('Text is required', 400));
+        }
 
         // Create new post
         const post = new Post({
@@ -36,13 +41,12 @@ const createPost = async (req, res) => {
         res.status(201).json(populatedPost);
 
     } catch (error) {
-        console.error('Create post error:', error);
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 
 // Get all posts (public with pagination and filtering)
-const getPosts = async (req, res) => {
+const getPosts = async (req, res, next) => {
     try {
         const { page = 1, limit = 10, userId } = req.query;
         
@@ -78,13 +82,12 @@ const getPosts = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Get posts error:', error);
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 
 // Get single post by ID (public)
-const getPost = async (req, res) => {
+const getPost = async (req, res, next) => {
     try {
         const { id } = req.params;
 
@@ -92,49 +95,50 @@ const getPost = async (req, res) => {
             .populate('user', 'id name avatar');
 
         if (!post) {
-            return res.status(404).json({ msg: 'Post not found' });
+            return next(new AppError('Post not found', 404));
         }
 
         res.status(200).json(post);
 
     } catch (error) {
-        console.error('Get post error:', error);
-        if (error.name === 'CastError') {
-            return res.status(400).json({ msg: 'Invalid post ID' });
-        }
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 
 // Edit post (protected - owner only)
-const editPost = async (req, res) => {
+const editPost = async (req, res, next) => {
     try {
         const { id } = req.params;
         const { text } = req.body;
 
         // Validate text
         if (!text || text.trim().length === 0) {
-            return res.status(400).json({ msg: 'Text is required' });
+            return next(new AppError('Text is required', 400));
         }
 
         if (text.length > 500) {
-            return res.status(400).json({ msg: 'Text must be 500 characters or less' });
+            return next(new AppError('Text must be 500 characters or less', 400));
         }
 
         // Find post
         const post = await Post.findById(id);
         
         if (!post) {
-            return res.status(404).json({ msg: 'Post not found' });
+            return next(new AppError('Post not found', 404));
         }
 
         // Check ownership
         if (post.user.toString() !== req.user.id) {
-            return res.status(403).json({ msg: 'Access denied. You can only edit your own posts' });
+            return next(new AppError('Access denied. You can only edit your own posts', 403));
         }
 
-        // Update post
-        post.text = text.trim();
+        // Sanitize and update post
+        const sanitizedText = sanitizePostText(text);
+        if (!sanitizedText) {
+            return next(new AppError('Text is required', 400));
+        }
+        
+        post.text = sanitizedText;
         post.edited = true;
         await post.save();
 
@@ -145,16 +149,12 @@ const editPost = async (req, res) => {
         res.status(200).json(updatedPost);
 
     } catch (error) {
-        console.error('Edit post error:', error);
-        if (error.name === 'CastError') {
-            return res.status(400).json({ msg: 'Invalid post ID' });
-        }
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 
 // Delete post (protected - owner only)
-const deletePost = async (req, res) => {
+const deletePost = async (req, res, next) => {
     try {
         const { id } = req.params;
 
@@ -162,12 +162,12 @@ const deletePost = async (req, res) => {
         const post = await Post.findById(id);
         
         if (!post) {
-            return res.status(404).json({ msg: 'Post not found' });
+            return next(new AppError('Post not found', 404));
         }
 
         // Check ownership
         if (post.user.toString() !== req.user.id) {
-            return res.status(403).json({ msg: 'Access denied. You can only delete your own posts' });
+            return next(new AppError('Access denied. You can only delete your own posts', 403));
         }
 
         // Delete all comments associated with this post
@@ -179,16 +179,12 @@ const deletePost = async (req, res) => {
         res.status(200).json({ msg: 'Post removed' });
 
     } catch (error) {
-        console.error('Delete post error:', error);
-        if (error.name === 'CastError') {
-            return res.status(400).json({ msg: 'Invalid post ID' });
-        }
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 
 // Toggle like on post (protected)
-const toggleLike = async (req, res) => {
+const toggleLike = async (req, res, next) => {
     try {
         const { id } = req.params;
         const userId = req.user.id;
@@ -197,7 +193,7 @@ const toggleLike = async (req, res) => {
         const post = await Post.findById(id);
         
         if (!post) {
-            return res.status(404).json({ msg: 'Post not found' });
+            return next(new AppError('Post not found', 404));
         }
 
         // Check if user already liked the post
@@ -219,11 +215,7 @@ const toggleLike = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Toggle like error:', error);
-        if (error.name === 'CastError') {
-            return res.status(400).json({ msg: 'Invalid post ID' });
-        }
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 

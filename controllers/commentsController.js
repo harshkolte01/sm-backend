@@ -1,30 +1,35 @@
 const Comment = require('../models/Comment');
 const Post = require('../models/Post');
+const { sanitizeCommentText } = require('../utils/sanitizer');
+const { AppError } = require('../middleware/errorHandler');
 
 // Create a new comment (protected)
-const createComment = async (req, res) => {
+const createComment = async (req, res, next) => {
     try {
         const { postId } = req.params;
         const { text } = req.body;
 
         // Validate text
         if (!text || text.trim().length === 0) {
-            return res.status(400).json({ msg: 'Text is required' });
+            return next(new AppError('Text is required', 400));
         }
 
         // Validate text length (max 300 characters for comments)
         if (text.length > 300) {
-            return res.status(400).json({ msg: 'Comment must be 300 characters or less' });
+            return next(new AppError('Comment must be 300 characters or less', 400));
         }
 
         // Check if post exists
         const post = await Post.findById(postId);
         if (!post) {
-            return res.status(404).json({ msg: 'Post not found' });
+            return next(new AppError('Post not found', 404));
         }
 
-        // Sanitize text
-        const sanitizedText = text.trim();
+        // Sanitize text for XSS protection
+        const sanitizedText = sanitizeCommentText(text);
+        if (!sanitizedText) {
+            return next(new AppError('Text is required', 400));
+        }
 
         // Create new comment
         const comment = new Comment({
@@ -46,23 +51,19 @@ const createComment = async (req, res) => {
         res.status(201).json(populatedComment);
 
     } catch (error) {
-        console.error('Create comment error:', error);
-        if (error.name === 'CastError') {
-            return res.status(400).json({ msg: 'Invalid post ID' });
-        }
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 
 // Get comments for a post (public)
-const getComments = async (req, res) => {
+const getComments = async (req, res, next) => {
     try {
         const { postId } = req.params;
 
         // Check if post exists
         const post = await Post.findById(postId);
         if (!post) {
-            return res.status(404).json({ msg: 'Post not found' });
+            return next(new AppError('Post not found', 404));
         }
 
         // Get comments sorted by creation date (oldest first)
@@ -73,43 +74,44 @@ const getComments = async (req, res) => {
         res.status(200).json(comments);
 
     } catch (error) {
-        console.error('Get comments error:', error);
-        if (error.name === 'CastError') {
-            return res.status(400).json({ msg: 'Invalid post ID' });
-        }
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 
 // Edit comment (protected - owner only)
-const editComment = async (req, res) => {
+const editComment = async (req, res, next) => {
     try {
         const { id } = req.params;
         const { text } = req.body;
 
         // Validate text
         if (!text || text.trim().length === 0) {
-            return res.status(400).json({ msg: 'Text is required' });
+            return next(new AppError('Text is required', 400));
         }
 
         if (text.length > 300) {
-            return res.status(400).json({ msg: 'Comment must be 300 characters or less' });
+            return next(new AppError('Comment must be 300 characters or less', 400));
         }
 
         // Find comment
         const comment = await Comment.findById(id);
         
         if (!comment) {
-            return res.status(404).json({ msg: 'Comment not found' });
+            return next(new AppError('Comment not found', 404));
         }
 
         // Check ownership
         if (comment.user.toString() !== req.user.id) {
-            return res.status(403).json({ msg: 'Access denied. You can only edit your own comments' });
+            return next(new AppError('Access denied. You can only edit your own comments', 403));
         }
 
-        // Update comment
-        comment.text = text.trim();
+        // Sanitize and update comment
+        const sanitizedText = sanitizeCommentText(text);
+        if (!sanitizedText) {
+            return next(new AppError('Text is required', 400));
+        }
+        
+        comment.text = sanitizedText;
         comment.edited = true;
         await comment.save();
 
@@ -120,16 +122,12 @@ const editComment = async (req, res) => {
         res.status(200).json(updatedComment);
 
     } catch (error) {
-        console.error('Edit comment error:', error);
-        if (error.name === 'CastError') {
-            return res.status(400).json({ msg: 'Invalid comment ID' });
-        }
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 
 // Delete comment (protected - owner only)
-const deleteComment = async (req, res) => {
+const deleteComment = async (req, res, next) => {
     try {
         const { id } = req.params;
 
@@ -137,12 +135,12 @@ const deleteComment = async (req, res) => {
         const comment = await Comment.findById(id);
         
         if (!comment) {
-            return res.status(404).json({ msg: 'Comment not found' });
+            return next(new AppError('Comment not found', 404));
         }
 
         // Check ownership
         if (comment.user.toString() !== req.user.id) {
-            return res.status(403).json({ msg: 'Access denied. You can only delete your own comments' });
+            return next(new AppError('Access denied. You can only delete your own comments', 403));
         }
 
         // Get the post to decrement comments count
@@ -160,11 +158,7 @@ const deleteComment = async (req, res) => {
         res.status(200).json({ msg: 'Comment removed' });
 
     } catch (error) {
-        console.error('Delete comment error:', error);
-        if (error.name === 'CastError') {
-            return res.status(400).json({ msg: 'Invalid comment ID' });
-        }
-        res.status(500).json({ msg: 'Server error' });
+        next(error);
     }
 };
 
