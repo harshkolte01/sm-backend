@@ -8,8 +8,14 @@ require('./models/User');
 require('./models/Post');
 require('./models/Comment');
 
+// Import middleware
+const auth = require('./middleware/auth');
+
 // Import routes
 const authRoutes = require('./routes/auth');
+const usersRoutes = require('./routes/users');
+const postsRoutes = require('./routes/posts');
+const commentsRoutes = require('./routes/comments');
 
 const app = express();
 
@@ -32,8 +38,19 @@ app.get('/', (req, res) => {
     res.status(200).json({ message: 'Backend API is running' });
 });
 
-// Mount auth routes
+// Protected test route
+app.get('/api/protected', auth, (req, res) => {
+    res.status(200).json({
+        message: 'Access granted to protected route',
+        user: req.user
+    });
+});
+
+// Mount routes
 app.use('/api/auth', authRoutes);
+app.use('/api/users', usersRoutes);
+app.use('/api/posts', postsRoutes);
+app.use('/api', commentsRoutes);
 
 const PORT = process.env.PORT || 5000;
 

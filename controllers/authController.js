@@ -12,10 +12,6 @@ const generateToken = (userId) => {
 // Signup controller
 const signup = async (req, res) => {
     try {
-        // Debug logging
-        console.log('Request headers:', req.headers);
-        console.log('Request body:', req.body);
-        
         const { name, email, password } = req.body;
 
         // Validate required fields
