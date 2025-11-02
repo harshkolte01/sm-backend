@@ -1,7 +1,6 @@
 const Post = require('../models/Post');
 const User = require('../models/User');
 const Comment = require('../models/Comment');
-const { sanitizePostText } = require('../utils/sanitizer');
 const { AppError } = require('../middleware/errorHandler');
 const { minioClient } = require('../config/minio');
 const { generateFileName } = require('../middleware/upload');
@@ -21,16 +20,10 @@ const createPost = async (req, res, next) => {
             return next(new AppError('Text must be 500 characters or less', 400));
         }
 
-        // Sanitize text for XSS protection
-        const sanitizedText = sanitizePostText(text);
-        if (!sanitizedText) {
-            return next(new AppError('Text is required', 400));
-        }
-
-        // Create new post
+        // Create new post with trimmed text (no sanitization)
         const post = new Post({
             user: req.user.id,
-            text: sanitizedText,
+            text: text.trim(),
             image: image || undefined
         });
 
@@ -134,13 +127,8 @@ const editPost = async (req, res, next) => {
             return next(new AppError('Access denied. You can only edit your own posts', 403));
         }
 
-        // Sanitize and update post
-        const sanitizedText = sanitizePostText(text);
-        if (!sanitizedText) {
-            return next(new AppError('Text is required', 400));
-        }
-        
-        post.text = sanitizedText;
+        // Update post with trimmed text (no sanitization)
+        post.text = text.trim();
         post.edited = true;
         await post.save();
 
