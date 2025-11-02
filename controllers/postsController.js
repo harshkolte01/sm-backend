@@ -3,6 +3,8 @@ const User = require('../models/User');
 const Comment = require('../models/Comment');
 const { sanitizePostText } = require('../utils/sanitizer');
 const { AppError } = require('../middleware/errorHandler');
+const { minioClient } = require('../config/minio');
+const { generateFileName } = require('../middleware/upload');
 
 // Create a new post (protected)
 const createPost = async (req, res, next) => {
@@ -219,11 +221,193 @@ const toggleLike = async (req, res, next) => {
     }
 };
 
+// Upload image to MinIO (protected)
+const uploadImage = (req, res, next) => {
+    // Handle multer errors first
+    if (req.fileValidationError) {
+        console.log('File validation error:', req.fileValidationError);
+        return next(new AppError(req.fileValidationError, 400));
+    }
+
+    // Async function for the actual upload
+    const performUpload = async () => {
+        try {
+            console.log('Upload request received');
+            console.log('Request file:', req.file ? 'File present' : 'No file');
+            console.log('Request body:', req.body);
+            console.log('Request headers:', req.headers['content-type']);
+            
+            // Check if file was uploaded
+            if (!req.file) {
+                console.log('No file in request');
+                return next(new AppError('No image file provided', 400));
+            }
+
+            console.log('File details:', {
+                originalname: req.file.originalname,
+                mimetype: req.file.mimetype,
+                size: req.file.size,
+                buffer: req.file.buffer ? `Buffer size: ${req.file.buffer.length}` : 'No buffer'
+            });
+
+            // Generate unique filename
+            const fileName = generateFileName(req.file.originalname);
+            console.log('Generated filename:', fileName);
+            
+            // Check MinIO environment variables
+            if (!process.env.MINIO_BUCKET_NAME || !process.env.MINIO_ENDPOINT || !process.env.MINIO_PORT) {
+                console.error('Missing MinIO environment variables');
+                return next(new AppError('MinIO configuration error', 500));
+            }
+
+            console.log('MinIO config:', {
+                bucket: process.env.MINIO_BUCKET_NAME,
+                endpoint: process.env.MINIO_ENDPOINT,
+                port: process.env.MINIO_PORT
+            });
+            
+            // Upload to MinIO
+            console.log('Uploading to MinIO...');
+            await minioClient.putObject(
+                process.env.MINIO_BUCKET_NAME,
+                fileName,
+                req.file.buffer,
+                req.file.size,
+                {
+                    'Content-Type': req.file.mimetype,
+                    'Cache-Control': 'max-age=31536000' // 1 year cache
+                }
+            );
+
+            console.log('Upload successful');
+
+            // Generate public URL using our backend as proxy
+            const baseUrl = process.env.BACKEND_URL;
+            if (!baseUrl) {
+                console.error('BACKEND_URL environment variable not set');
+                return next(new AppError('Server configuration error', 500));
+            }
+            
+            const imageUrl = `${baseUrl}/api/posts/image/${fileName}`;
+
+            res.status(200).json({
+                success: true,
+                message: 'Image uploaded successfully',
+                imageUrl: imageUrl,
+                fileName: fileName
+            });
+
+        } catch (error) {
+            console.error('Image upload error:', error);
+            console.error('Error stack:', error.stack);
+            next(new AppError(`Failed to upload image: ${error.message}`, 500));
+        }
+    };
+
+    performUpload();
+};
+
+// Delete image from MinIO (protected)
+const deleteImage = async (req, res, next) => {
+    try {
+        const { fileName } = req.params;
+
+        if (!fileName) {
+            return next(new AppError('File name is required', 400));
+        }
+
+        // Delete from MinIO
+        await minioClient.removeObject(process.env.MINIO_BUCKET_NAME, fileName);
+
+        res.status(200).json({
+            success: true,
+            message: 'Image deleted successfully'
+        });
+
+    } catch (error) {
+        console.error('Image deletion error:', error);
+        next(new AppError('Failed to delete image', 500));
+    }
+};
+
+// Serve image from MinIO (proxy endpoint)
+const serveImage = async (req, res, next) => {
+    try {
+        const { fileName } = req.params;
+        
+        if (!fileName) {
+            return next(new AppError('File name is required', 400));
+        }
+
+        console.log('Serving image:', fileName);
+
+        // Get image from MinIO
+        const imageStream = await minioClient.getObject(process.env.MINIO_BUCKET_NAME, fileName);
+        
+        // Set appropriate headers
+        res.setHeader('Content-Type', 'image/jpeg'); // Default, will be overridden by actual type
+        res.setHeader('Cache-Control', 'public, max-age=31536000'); // 1 year cache
+        
+        // Pipe the image stream to response
+        imageStream.pipe(res);
+
+    } catch (error) {
+        console.error('Image serve error:', error);
+        if (error.code === 'NoSuchKey') {
+            return next(new AppError('Image not found', 404));
+        }
+        next(new AppError('Failed to serve image', 500));
+    }
+};
+
+// Migrate existing MinIO URLs to proxy URLs
+const migrateImageUrls = async () => {
+    try {
+        console.log('🔄 Checking for posts with old MinIO URLs...');
+        
+        const oldUrlPattern = new RegExp(`^http://${process.env.MINIO_ENDPOINT}:${process.env.MINIO_PORT}/${process.env.MINIO_BUCKET_NAME}/`);
+        const postsToUpdate = await Post.find({
+            image: { $regex: oldUrlPattern }
+        });
+
+        if (postsToUpdate.length === 0) {
+            console.log('✅ No posts need URL migration');
+            return;
+        }
+
+        console.log(`🔄 Migrating ${postsToUpdate.length} posts with old MinIO URLs...`);
+
+        const baseUrl = process.env.BACKEND_URL;
+        if (!baseUrl) {
+            console.error('❌ BACKEND_URL environment variable not set - cannot migrate URLs');
+            return;
+        }
+
+        for (const post of postsToUpdate) {
+            // Extract filename from old URL
+            const fileName = post.image.split('/').pop();
+            // Generate new proxy URL
+            const newUrl = `${baseUrl}/api/posts/image/${fileName}`;
+            
+            await Post.findByIdAndUpdate(post._id, { image: newUrl });
+            console.log(`✅ Updated post ${post._id}: ${fileName}`);
+        }
+
+        console.log(`✅ Successfully migrated ${postsToUpdate.length} posts to use proxy URLs`);
+    } catch (error) {
+        console.error('❌ Error migrating image URLs:', error);
+    }
+};
+
 module.exports = {
     createPost,
     getPosts,
     getPost,
     editPost,
     deletePost,
-    toggleLike
+    toggleLike,
+    uploadImage,
+    deleteImage,
+    serveImage,
+    migrateImageUrls
 };

@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/db');
+const { initializeBucket, testConnection } = require('./config/minio');
 
 // Import models to register them with Mongoose
 require('./models/User');
@@ -20,8 +21,30 @@ const commentsRoutes = require('./routes/comments');
 
 const app = express();
 
-// Connect to MongoDB
-connectDB();
+// Initialize connections
+const initializeServices = async () => {
+    try {
+        // Connect to MongoDB
+        await connectDB();
+        
+        // Test MinIO connection and initialize bucket
+        const minioConnected = await testConnection();
+        if (minioConnected) {
+            await initializeBucket();
+            
+            // Migrate existing image URLs to use proxy
+            const { migrateImageUrls } = require('./controllers/postsController');
+            await migrateImageUrls();
+        } else {
+            console.warn('⚠️  MinIO connection failed. Image upload will not work.');
+        }
+    } catch (error) {
+        console.error('❌ Service initialization failed:', error.message);
+        process.exit(1);
+    }
+};
+
+initializeServices();
 
 // Middleware
 app.use(express.json());
