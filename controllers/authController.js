@@ -112,7 +112,34 @@ const login = async (req, res, next) => {
     }
 };
 
+// Get current user (protected)
+const getMe = async (req, res, next) => {
+    try {
+        // req.user is set by the auth middleware
+        const user = await User.findById(req.user.id).select('-passwordHash');
+        
+        if (!user) {
+            return next(new AppError('User not found', 404));
+        }
+
+        res.status(200).json({
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                avatar: user.avatar,
+                bio: user.bio,
+                createdAt: user.createdAt
+            }
+        });
+
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     signup,
-    login
+    login,
+    getMe
 };
