@@ -40,13 +40,19 @@ const createPost = async (req, res, next) => {
     }
 };
 
-// Get all posts (public with pagination and filtering)
+// Get all posts (public with pagination and basic filtering)
 const getPosts = async (req, res, next) => {
     try {
-        const { page = 1, limit = 10, userId } = req.query;
+        const {
+            page = 1,
+            limit = 10,
+            userId
+        } = req.query;
         
         // Build query
         const query = {};
+        
+        // User filter
         if (userId) {
             query.user = userId;
         }
@@ -56,15 +62,15 @@ const getPosts = async (req, res, next) => {
         const limitNum = parseInt(limit);
         const skip = (pageNum - 1) * limitNum;
 
-        // Get posts with pagination
+        // Get total count for pagination
+        const total = await Post.countDocuments(query);
+
+        // Get posts with pagination and populate user info
         const posts = await Post.find(query)
             .populate('user', 'id name avatar')
-            .sort({ createdAt: -1 })
+            .sort({ createdAt: -1 }) // Always sort by newest first
             .skip(skip)
             .limit(limitNum);
-
-        // Get total count for pagination info
-        const total = await Post.countDocuments(query);
 
         res.status(200).json({
             posts,
